@@ -51,16 +51,16 @@ export default function UploadForm() {
         <div>
           <h2>Receipt</h2>
           <ul>
-            {receipt.items.map((item: any, index: number) => (
+            {receipt.receipt_summary.items.map((item: any, index: number) => (
               <li key={index}>
                 {item.quantity} x {item.item} - ${item.price.toFixed(2)}
               </li>
             ))}
           </ul>
-          <p>Subtotal: ${receipt.subtotal?.toFixed(2)}</p>
-          <p>Tax: ${receipt.tax?.toFixed(2)}</p>
-          <p>Total: ${receipt.total?.toFixed(2)}</p>
-          <p>Tip: ${receipt.tip?.toFixed(2)}</p>
+          <p>Subtotal: ${receipt.receipt_summary.subtotal?.toFixed(2)}</p>
+          <p>Tax: ${receipt.receipt_summary.tax?.toFixed(2)}</p>
+          <p>Total: ${receipt.receipt_summary.total?.toFixed(2)}</p>
+          <p>Tip: ${receipt.receipt_summary.tip?.toFixed(2)}</p>
         </div>
       )}
     </div>

@@ -15,8 +15,124 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 # Store session data
 sessions = {}
 
+# ...existing code...
+
 @app.route("/api/processbill", methods=["POST"])
 def process_bill():
+    if request.method == "POST":
+        try:
+            # Check if the content type is correct
+            if 'multipart/form-data' not in request.content_type:
+                return jsonify({"error": "Invalid content type"}), 400
+
+            # Get the file from the request
+            file = request.files.get('file')
+            if not file:
+                return jsonify({"error": "No file provided"}), 400
+
+            # Process the image
+            img = Image.open(file.stream)
+            def preprocess_image(img):
+                img = img.convert("L")
+                enhancer = ImageEnhance.Contrast(img)
+                img = enhancer.enhance(3)
+                return img
+
+            processed_img = preprocess_image(img)
+            str_img = pytesseract.image_to_string(processed_img, config="--psm 11 --oem 3 tessedit_char_whitelist=0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.:$")
+        
+            item_pattern = r'(\d+)?\s*([a-zA-Z\s]+)\s*\$?(\d+\.\d{2})'
+
+            # List to hold the items
+            items = []
+
+            # Find all matches for the pattern in the str_img text
+            matches = re.findall(item_pattern, str_img)
+
+            # Extract item details (no subtotal calculation here)
+            for match in matches:
+                quantity, item, price = match
+                quantity = int(quantity) if quantity else 1  # Default quantity to 1 if not provided
+                price = float(price)
+                
+                # Add to the list
+                items.append({
+                    'item': item.strip(),
+                    'quantity': quantity,
+                    'price': price
+                })
+
+            # Regular expressions to extract subtotal, tax, and total (allowing missing letters anywhere)
+            subtotal_pattern = r'subto?t?a?l\s*\$?(\d+\.\d{2})'  # Handle variations of 'subtotal'
+            tax_pattern = r'ta?x\s*\$?(\d+\.\d{2})'  # Handle variations of 'tax'
+            tip_pattern = r't?i?p\s*\$?(\d+\.\d{2})' 
+            total_pattern = r't?o?t?a?l\s*\$?(\d+\.\d{2})' 
+            payment_pattern = r'Payment\s*\$?(\d+\.\d{2})'
+            other_pattern = r'Other\s*\$?(\d+\.\d{2})'
+
+            total_matches = re.findall(total_pattern, str_img, re.IGNORECASE)
+            payment_match = re.search(payment_pattern, str_img, re.IGNORECASE)
+
+            subtotal_match = re.search(subtotal_pattern, str_img, re.IGNORECASE)
+            tax_match = re.search(tax_pattern, str_img, re.IGNORECASE)
+            tip_match = re.search(tip_pattern, str_img, re.IGNORECASE)
+            other_match = re.search(other_pattern, str_img, re.IGNORECASE)
+
+            # Get the first total (if any)
+            total = float(total_matches[0]) if total_matches else None
+
+            # If total equals subtotal, check the next total occurrence
+            if total and subtotal_match and float(subtotal_match.group(1)) == total:
+                if len(total_matches) > 1:  # Check for a second total
+                    total = float(total_matches[1])
+                else:
+                    total = None  # If there's no second total, set to None
+
+            # Search for subtotal, tax, and total (with case-insensitivity)
+            if payment_match:
+                total = float(payment_match.group(1))
+
+            # Extract values if they exist
+            subtotal = float(subtotal_match.group(1)) if subtotal_match else None
+            tax = float(tax_match.group(1)) if tax_match else None
+            tip = float(tip_match.group(1)) if tip_match else None
+
+            if tip is None and other_match:
+                tip = float(other_match.group(1))
+
+            # Remove any item where the price equals the total or any variation of subtotal, total, or tax appears in the name
+            items = [item for item in items if item['price'] != total and not re.search(r'(total|subtotal|tax)', item['item'], re.IGNORECASE)]
+
+            # Create the final receipt summary
+            receipt_summary = {
+                'items': items,  # Only items that do not match the total price or contain variations of 'total', 'subtotal', 'tax'
+                'subtotal': round(subtotal, 2) if subtotal is not None else None,
+                'tax': round(tax, 2) if tax is not None else None,
+                'total': round(total, 2) if total is not None else None,
+                'tip': round(tip, 2) if tip is not None else None
+            }
+
+            # Create a new session for the bill
+            session_id = str(uuid4())  # Unique session ID
+            user_id = str(uuid4())  # Unique user ID
+            sessions[session_id] = {
+                "bill": receipt_summary,
+                "users": {
+                    user_id: {
+                        "claimed_items": [],
+                        "total": 0
+                    }
+                }
+            }
+
+            # Convert the dictionary to a JSON response
+            return jsonify({"session_id": session_id, "user_id": user_id, "link": f"http://localhost:3000/scan-bill", "receipt_summary": receipt_summary})
+        except UnidentifiedImageError:
+            return jsonify({"error": "Cannot identify image file"}), 400
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+# ...existing code...
     """Process the uploaded receipt and create a session."""
     try:
         # Check for file in request
