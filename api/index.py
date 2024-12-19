@@ -7,6 +7,8 @@ import io
 import re
 import json
 import numpy as np
+from flask_socketio import SocketIO, join_room, leave_room, emit
+from uuid import uuid4
 app = Flask(__name__)
 #CORS(app)
 
@@ -102,4 +104,96 @@ def process_bill():
     json_response = json.dumps(receipt_summary, indent=4)
     return json_response
 
-# ...existing code...
+
+
+
+socketio = SocketIO(app, cors_allowed_origins="*")
+
+# Store session data
+sessions = {}
+
+@app.route("/api/create_session", methods=["POST"])
+def create_session():
+    """Create a new session for the bill."""
+    try:
+        # Parse the bill data
+        bill_data = request.json
+        session_id = str(uuid4())  # Unique session ID
+        sessions[session_id] = {
+            "bill": bill_data,
+            "users": {}
+        }
+        return jsonify({"session_id": session_id, "link": f"http://127.0.0.1:5000/session/{session_id}"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@socketio.on("join_session")
+def join_session(data):
+    """Allow a user to join a session."""
+    session_id = data.get("session_id")
+    user_id = data.get("user_id")
+    
+    if session_id not in sessions:
+        emit("error", {"message": "Invalid session ID"})
+        return
+    
+    join_room(session_id)
+    sessions[session_id]["users"][user_id] = {"claimed_items": [], "total": 0}
+    emit("session_joined", {"message": f"User {user_id} joined session {session_id}"}, room=session_id)
+    emit("bill_update", sessions[session_id]["bill"], room=session_id)
+
+@socketio.on("claim_item")
+def claim_item(data):
+    """Handle claiming an item from the bill."""
+    session_id = data.get("session_id")
+    user_id = data.get("user_id")
+    item_name = data.get("item_name")
+    claim_quantity = data.get("quantity")
+    
+    if session_id not in sessions or user_id not in sessions[session_id]["users"]:
+        emit("error", {"message": "Invalid session or user ID"})
+        return
+
+    # Get the bill and user's data
+    bill = sessions[session_id]["bill"]
+    user_data = sessions[session_id]["users"][user_id]
+    
+    # Find the item in the bill
+    for item in bill["items"]:
+        if item["item"].lower() == item_name.lower():
+            if item["quantity"] >= claim_quantity:
+                item["quantity"] -= claim_quantity
+                claimed_total = claim_quantity * item["price"]
+                user_data["claimed_items"].append({
+                    "item": item["item"],
+                    "quantity": claim_quantity,
+                    "price": item["price"]
+                })
+                user_data["total"] += claimed_total
+                bill["total"] -= claimed_total
+                
+                # Broadcast updates to all users
+                emit("bill_update", bill, room=session_id)
+                emit("user_update", user_data, to=request.sid)
+                return
+            else:
+                emit("error", {"message": "Not enough quantity available"})
+                return
+    
+    emit("error", {"message": "Item not found in bill"})
+
+@socketio.on("leave_session")
+def leave_session(data):
+    """Handle a user leaving the session."""
+    session_id = data.get("session_id")
+    user_id = data.get("user_id")
+    
+    if session_id in sessions and user_id in sessions[session_id]["users"]:
+        leave_room(session_id)
+        del sessions[session_id]["users"][user_id]
+        emit("user_left", {"message": f"User {user_id} left session {session_id}"}, room=session_id)
+    else:
+        emit("error", {"message": "Invalid session or user ID"})
+
+if __name__ == "__main__":
+    socketio.run(app, debug=True)
