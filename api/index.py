@@ -15,7 +15,7 @@ app = Flask(__name__)
 @app.route("/api/processbill")
 def process_bill():
     if request.method == "GET":
-        img_path = request.url.split("?image=")[1]
+        #img_path = request.url.split("?image=")[1]
 
         def preprocess_image(img):
             img = img.convert("L")
@@ -23,7 +23,7 @@ def process_bill():
             img = enhancer.enhance(3)
             return img
 
-        img = Image.open("public/uploads/" + img_path)
+        img = Image.open(io.BytesIO(request.data))
         processed_img = preprocess_image(img)
         str_img = image_to_string(processed_img, config="--psm 11 --oem 3 tessedit_char_whitelist=0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.:$")
     
