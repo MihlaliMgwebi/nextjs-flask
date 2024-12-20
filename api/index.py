@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, redirect, request, jsonify, url_for
 from flask_cors import CORS
 from flask_socketio import SocketIO, join_room, leave_room, emit
 from PIL import Image, ImageEnhance, UnidentifiedImageError
@@ -14,9 +14,6 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Store session data
 sessions = {}
-
-# ...existing code...
-
 @app.route("/api/processbill", methods=["POST"])
 def process_bill():
     if request.method == "POST":
@@ -116,7 +113,7 @@ def process_bill():
             session_id = str(uuid4())  # Unique session ID
             user_id = str(uuid4())  # Unique user ID
             sessions[session_id] = {
-                "bill": receipt_summary,
+                "receipt_summary": receipt_summary,
                 "users": {
                     user_id: {
                         "claimed_items": [],
@@ -126,7 +123,7 @@ def process_bill():
             }
 
             # Convert the dictionary to a JSON response
-            return jsonify({"session_id": session_id, "user_id": user_id, "link": f"http://localhost:3000/scan-bill", "receipt_summary": receipt_summary})
+            return jsonify({"session_id": session_id, "user_id": user_id,"link": "/session/{}".format(session_id), "receipt_summary": receipt_summary})
         except UnidentifiedImageError:
             return jsonify({"error": "Cannot identify image file"}), 400
         except Exception as e:
@@ -201,63 +198,87 @@ def process_bill():
 def join_session(data):
     """Allow a user to join a session."""
     session_id = data.get('session_id')
-    username = data.get('username')
-    if not session_id or not username or session_id not in sessions:
-        emit("error", {"message": "Invalid session or username"})
+    user_id = data.get('user_id') or str(uuid4())
+
+    if not session_id or not user_id or session_id not in sessions:
+        emit("error", {"message": "Invalid session or user_id"})
         return
 
     join_room(session_id)
-    sessions[session_id]['users'][username] = {'claimed_items': [], 'total': 0.0}
-    emit("session_update", sessions[session_id], to=session_id)
+    sessions[session_id]['users'][user_id] = {'claimed_items': [], 'total': 0.0}
+    
+    session_update_data = {
+        "receipt_summary": sessions[session_id]['receipt_summary'],
+        "users": sessions[session_id]['users'],
+        "session_id": session_id,
+        "user_id": user_id
+    }
+    emit("session_update", session_update_data, to=session_id)
+    return jsonify({"session_id": session_id, "link": "/session/{}".format(session_id), "receipt": sessions[session_id]})
+  
 
 @socketio.on("claim_item")
 def claim_item(data):
     """Allow a user to claim an item."""
     session_id = data.get('session_id')
-    username = data.get('username')
-    item_name = data.get('item')
-    quantity = data.get('quantity', 1)
+    user_id = data.get('user_id')
+    item_data = data.get('item')
+    item_name = item_data.get('item')
+    quantity = item_data.get('quantity', 1)
 
-    if session_id not in sessions or username not in sessions[session_id]['users']:
-        emit("error", {"message": "Invalid session or username"})
+    if session_id not in sessions or user_id not in sessions[session_id]['users']:
+        emit("error", {"message": "Invalid session or user_id"})
         return
 
     session = sessions[session_id]
-    user = session['users'][username]
+    user = session['users'][user_id]
+    receipt_summary = session['receipt_summary']
 
     # Find and update the item
-    for item in session['items']:
+    for item in receipt_summary['items']:
         if item['item'].lower() == item_name.lower() and item['quantity'] >= quantity:
             item['quantity'] -= quantity
             user['claimed_items'].append({'item': item_name, 'quantity': quantity, 'price': item['price'] * quantity})
             user['total'] += item['price'] * quantity
+            receipt_summary['total'] -= item['price'] * quantity
+            if item['quantity'] == 0:
+                receipt_summary['items'].remove(item)
             break
     else:
         emit("error", {"message": "Item not available or insufficient quantity"})
         return
-
-    emit("session_update", session, to=session_id)
+    
+    # Emit the updated session data
+    emit("session_update", {
+        "receipt_summary": receipt_summary,
+        "users": session['users'],
+        "session_id": session_id,
+        "user_id": user_id
+    }, to=session_id)
 
 @socketio.on("unclaim_item")
 def unclaim_item(data):
     """Allow a user to unclaim an item."""
     session_id = data.get('session_id')
-    username = data.get('username')
-    item_name = data.get('item')
-    quantity = data.get('quantity', 1)
+    user_id = data.get('user_id')
+    item_data = data.get('item')
+    item_name = item_data.get('item')
+    quantity = item_data.get('quantity', 1)
 
-    if session_id not in sessions or username not in sessions[session_id]['users']:
-        emit("error", {"message": "Invalid session or username"})
+    if session_id not in sessions or user_id not in sessions[session_id]['users']:
+        emit("error", {"message": "Invalid session or user_id"})
         return
 
     session = sessions[session_id]
-    user = session['users'][username]
+    user = session['users'][user_id]
+    receipt_summary = session['receipt_summary']
 
     # Find and update the claimed item
     for claimed_item in user['claimed_items']:
         if claimed_item['item'].lower() == item_name.lower() and claimed_item['quantity'] >= quantity:
             claimed_item['quantity'] -= quantity
             user['total'] -= claimed_item['price'] / claimed_item['quantity'] * quantity
+            receipt_summary['total'] += claimed_item['price'] / claimed_item['quantity'] * quantity
             if claimed_item['quantity'] == 0:
                 user['claimed_items'].remove(claimed_item)
             break
@@ -266,13 +287,21 @@ def unclaim_item(data):
         return
 
     # Restore the item to the session's receipt
-    for item in session['items']:
+    for item in receipt_summary['items']:
         if item['item'].lower() == item_name.lower():
             item['quantity'] += quantity
             break
+    else:
+        receipt_summary['items'].append({'item': item_name, 'quantity': quantity, 'price': claimed_item['price'] / quantity})
 
-    emit("session_update", session, to=session_id)
-
+    # Emit the updated session data
+    emit("session_update", {
+        "receipt_summary": receipt_summary,
+        "users": session['users'],
+        "session_id": session_id,
+        "user_id": user_id
+    }, to=session_id)
+    
 # Run the application
 if __name__ == "__main__":
-    socketio.run(app, debug=True)
+    socketio.run(app, debug=False, port=5328)
