@@ -1,5 +1,6 @@
 import { Inter } from "next/font/google";
 import "./globals.css";
+import { ReceiptProvider } from "./scan-bill/ReceiptContext";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -15,7 +16,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang='en'>
-      <body className={inter.className + " h-screen"}>{children}</body>
+      <ReceiptProvider>
+        <body className={inter.className + " h-screen"}>{children}</body>
+      </ReceiptProvider>
     </html>
   );
 }
