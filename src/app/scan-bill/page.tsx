@@ -1,10 +1,29 @@
 "use client";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { useReceiptContext } from "./ReceiptContext";
 
-import { useRef, useState } from "react";
-
-export default function UploadForm() {
+export default function ScanReceipt() {
+  const { receipt, setReceipt, socket } = useReceiptContext();
+  const router = useRouter();
+  const [link, setLink] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const [receipt, setReceipt] = useState<any>(null);
+
+  useEffect(() => {
+    // Retrieve receipt from local storage
+    const storedReceipt = localStorage.getItem("receipt");
+    if (storedReceipt) {
+      setReceipt(JSON.parse(storedReceipt));
+    }
+
+    if (socket) {
+      socket.on("session_update", (data: any) => {
+        setReceipt(data);
+        // Save receipt to local storage
+        localStorage.setItem("receipt", JSON.stringify(data));
+      });
+    }
+  }, [socket, setReceipt]);
 
   async function uploadFile(
     evt: React.MouseEvent<HTMLButtonElement, MouseEvent>
@@ -35,6 +54,19 @@ export default function UploadForm() {
 
     const result = await response.json();
     setReceipt(result); // Handle the result as needed
+    setLink(result.link); // Set the link for sharing TODO get sessionId
+    // Save receipt to local storage
+    localStorage.setItem("receipt", JSON.stringify(result));
+  }
+
+  function joinSession() {
+    if (socket && receipt) {
+      socket.emit("join_session", {
+        session_id: receipt.session_id,
+        user_id: receipt.user_id, // Use user_id as username
+      });
+      router.push(`${receipt.link}?userId=${receipt.user_id}`); // Add userId as query param
+    }
   }
 
   return (
@@ -61,6 +93,14 @@ export default function UploadForm() {
           <p>Tax: ${receipt.receipt_summary.tax?.toFixed(2)}</p>
           <p>Total: ${receipt.receipt_summary.total?.toFixed(2)}</p>
           <p>Tip: ${receipt.receipt_summary.tip?.toFixed(2)}</p>
+        </div>
+      )}
+
+      {link && (
+        <div>
+          <h2>Shareable Link</h2>
+          <input type="text" value={link} readOnly />
+          <button onClick={joinSession}>Join session</button>
         </div>
       )}
     </div>
