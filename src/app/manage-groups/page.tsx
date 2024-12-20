@@ -1,50 +1,49 @@
 "use client";
-
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useReceiptContext } from "../scan-bill/ReceiptContext";
 
-// Example of using the Contacts API (if supported)
-async function getContacts() {
-  if ("contacts" in navigator) {
-    const options = new ContactFindOptions();
-    options.filter = ""; // Empty string for all contacts
-    options.multiple = true; // Get multiple contacts
-    const fields = ["name", "phoneNumbers"];
 
-    try {
-      const contacts = await navigator.contacts.select(fields, options);
-      console.log(contacts);
-      return contacts;
-    } catch (error) {
-      console.error("Error fetching contacts:", error);
-    }
-  } else {
-    console.log("Contacts API not supported");
-  }
-}
-
-const ContactList = () => {
-  const [contacts, setContacts] = useState([]);
-
+export default function JoinSessionPage() {
+  const { socket, receipt, setReceipt } = useReceiptContext();
+  const router = useRouter();
+  const [sessionId, setSessionId] = useState<string>("");
   useEffect(() => {
-    async function fetchContacts() {
-      const fetchedContacts = await getContacts();
-      setContacts(fetchedContacts);
+    // Retrieve receipt from local storage
+    const storedReceipt = localStorage.getItem("receipt");
+    if (storedReceipt) {
+      setReceipt(JSON.parse(storedReceipt));
     }
-    fetchContacts();
-  }, []);
+
+    if (socket) {
+      socket.on("session_update", (data: any) => {
+        setReceipt(data);
+        // Save receipt to local storage
+        localStorage.setItem("receipt", JSON.stringify(data));
+      });
+    }
+  }, [socket, setReceipt]);
+  
+  function joinSession() {
+    if (socket && receipt) {
+      socket.emit("join_session", {
+        session_id: sessionId,
+        user_id: receipt.user_id, // Use user_id as username
+      });
+      router.push(`session/${sessionId}?userId=${receipt.user_id}`); // Add userId as query param
+    }
+  }
 
   return (
     <div>
-      <h2>Select a Contact</h2>
-      <ul>
-        {/* {contacts.map((contact) => (
-          <li key={contact.id}>
-            {contact.name} - {contact.phoneNumbers[0]?.value}
-          </li>
-        ))} */}
-      </ul>
+      <h1>Join a Session</h1>
+      <input
+        type="text"
+        value={sessionId}
+        onChange={(e) => setSessionId(e.target.value)}
+        placeholder="Enter session ID"
+      />
+      <button onClick={joinSession}>Join session</button>
     </div>
   );
-};
-
-export default ContactList;
+}
