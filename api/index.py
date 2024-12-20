@@ -276,9 +276,10 @@ def unclaim_item(data):
     # Find and update the claimed item
     for claimed_item in user['claimed_items']:
         if claimed_item['item'].lower() == item_name.lower() and claimed_item['quantity'] >= quantity:
+            price_per_unit = claimed_item['price'] / claimed_item['quantity'] if claimed_item['quantity'] > 0 else 0
             claimed_item['quantity'] -= quantity
-            user['total'] -= claimed_item['price'] / claimed_item['quantity'] * quantity
-            receipt_summary['total'] += claimed_item['price'] / claimed_item['quantity'] * quantity
+            user['total'] -= price_per_unit * quantity
+            receipt_summary['total'] += price_per_unit * quantity
             if claimed_item['quantity'] == 0:
                 user['claimed_items'].remove(claimed_item)
             break
@@ -292,7 +293,7 @@ def unclaim_item(data):
             item['quantity'] += quantity
             break
     else:
-        receipt_summary['items'].append({'item': item_name, 'quantity': quantity, 'price': claimed_item['price'] / quantity})
+        receipt_summary['items'].append({'item': item_name, 'quantity': quantity, 'price': price_per_unit * quantity})
 
     # Emit the updated session data
     emit("session_update", {
@@ -301,7 +302,7 @@ def unclaim_item(data):
         "session_id": session_id,
         "user_id": user_id
     }, to=session_id)
-    
+
 # Run the application
 if __name__ == "__main__":
     socketio.run(app, debug=False, port=5328)

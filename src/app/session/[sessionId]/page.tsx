@@ -27,6 +27,16 @@ export default function ClaimMealPage() {
       });
     }
   };
+  
+  const unclaimItem = (item: any) => {
+    if (socket && receipt) {
+      socket.emit("unclaim_item", {
+        item,
+        session_id: receipt.session_id,
+        user_id: userId,
+      });
+    }
+  };
 
   return (
     <div>
@@ -57,6 +67,7 @@ export default function ClaimMealPage() {
                   {receipt.users[userId].claimed_items.map((item: any, index: number) => (
                     <li key={index}>
                       {item.quantity} x {item.item} - ${item.price.toFixed(2)}
+                      <button onClick={() => unclaimItem(item)}>Remove</button>
                     </li>
                   ))}
                 </ul>
