@@ -14,6 +14,11 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Store session data
 sessions = {}
+
+@app.route("/api/healthchecker", methods=["GET"])
+def healthchecker():
+    return {"status": "success", "message": "Integrate Flask Framework with Next.js"}
+
 @app.route("/api/processbill", methods=["POST"])
 def process_bill():
     if request.method == "POST":
